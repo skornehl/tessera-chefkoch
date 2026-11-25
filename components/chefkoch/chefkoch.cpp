@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace esphome::chefkoch {
 
@@ -38,9 +39,12 @@ class StepTile : public tessera::Tile {
     where_ = ui::label(c.parent, Font::BODY_LARGE, theme::MUTED);
     lv_obj_set_style_text_align(where_, LV_TEXT_ALIGN_RIGHT, 0);
 
-    body_ = ui::text(c.parent, Font::BODY_LARGE, theme::INK);
-    lv_obj_set_pos(body_, 0, body_y_);
-    lv_obj_set_size(body_, width_, body_h_);
+    // Up to three columns of words: a step is one, a long list of ingredients takes two or three (paint()).
+    for (auto *&col : body_) {
+      col = ui::text(c.parent, Font::BODY_LARGE, theme::INK);
+      lv_obj_set_pos(col, 0, body_y_);
+      lv_obj_set_size(col, width_, body_h_);
+    }
 
     // Three keys of equal width; the middle one (timer) only shows when the step has a timer.
     key_w_ = std::max(1, (width_ - 2 * gap_) / 3);
@@ -98,7 +102,7 @@ class StepTile : public tessera::Tile {
   void on_theme() override {
     ui::set_color(title_, theme::INK);
     ui::set_color(where_, theme::MUTED);
-    ui::set_color(body_, theme::INK);
+    for (auto *col : body_) ui::set_color(col, theme::INK);
     ui::set_color(empty_, theme::MUTED);
     for (int i = 0; i < 3; ++i) ui::set_color(key_labels_[i], i == 2 ? theme::ON_ACCENT : theme::INK);
     dirty_ = true;
@@ -135,6 +139,25 @@ class StepTile : public tessera::Tile {
   static void press(const tessera::Text &button) {
     if (!button.empty()) tessera::action("button.press", roomy::plain(button));
   }
+  int column_width(int n) const { return std::max(1, (width_ - (n - 1) * 2 * gap_) / n); }
+
+  // Whether the lines, cut into n columns in their order, fit the body in font f.
+  bool fits(const std::vector<std::string> &lines, int n, Font f, int32_t line_space) const {
+    const size_t per = (lines.size() + n - 1) / n;
+    const int w = column_width(n);
+    for (int i = 0; i < n; ++i) {
+      std::string part;
+      for (size_t l = i * per; l < lines.size() && l < (i + 1) * per; ++l) {
+        if (!part.empty()) part += "\n";
+        part += lines[l];
+      }
+      lv_point_t size;
+      lv_text_get_size(&size, part.c_str(), ui::font(f), 0, line_space, w, LV_TEXT_FLAG_NONE);
+      if (size.y > body_h_) return false;
+    }
+    return true;
+  }
+
   static void show(lv_obj_t *obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -144,7 +167,7 @@ class StepTile : public tessera::Tile {
     show(empty_, !cooking_);
     show(title_, cooking_);
     show(where_, cooking_);
-    show(body_, cooking_);
+    for (auto *col : body_) show(col, cooking_);
     if (!cooking_) {
       for (auto *k : keys_) show(k, false);
       const std::string msg = chosen_ ? std::string(plugin_->text("nothing")) + "\n" + plugin_->text("nothing_hint")
@@ -164,22 +187,46 @@ class StepTile : public tessera::Tile {
     lv_obj_set_width(title_, std::max(1, width_ - where_w - gap_));
     ui::set_text(title_, roomy::plain(recipe_));
 
-    // The words, in the largest font they fit in.
+    // The words in the largest font they fit in; lines (the ingredients) may spread over two or three columns, and
+    // of two layouts in the same font the one with fewer columns wins.
     const std::string text = roomy::plain(words_);
-    const int32_t line_space = lv_obj_get_style_text_line_space(body_, LV_PART_MAIN);
+    std::vector<std::string> lines;
+    for (size_t at = 0;;) {
+      const size_t end = text.find('\n', at);
+      lines.push_back(text.substr(at, end == std::string::npos ? std::string::npos : end - at));
+      if (end == std::string::npos) break;
+      at = end + 1;
+    }
+    const int32_t line_space = lv_obj_get_style_text_line_space(body_[0], LV_PART_MAIN);
     Font face = Font::BODY;
+    int columns = 1;
+    bool found = false;
     for (Font f : {Font::HEADLINE, Font::BODY_LARGE, Font::BODY}) {
       if (f != Font::BODY && !ui::covers(text, f)) continue;
-      lv_point_t size;
-      lv_text_get_size(&size, text.c_str(), ui::font(f), 0, line_space, width_, LV_TEXT_FLAG_NONE);
-      if (size.y <= body_h_) {
-        face = f;
-        break;
+      for (int n = 1; n <= 3 && n <= static_cast<int>(lines.size()) && !found; ++n) {
+        if (fits(lines, n, f, line_space)) {
+          face = f;
+          columns = n;
+          found = true;
+        }
       }
+      if (found) break;
     }
-    lv_obj_set_style_text_font(body_, ui::font(face), 0);
-    lv_obj_set_size(body_, width_, body_h_);
-    ui::set_text(body_, text);
+    if (!found) columns = std::min<int>(3, lines.size());
+    const int col_w = column_width(columns);
+    const size_t per = (lines.size() + columns - 1) / columns;
+    for (int i = 0; i < 3; ++i) {
+      std::string part;
+      for (size_t l = i * per; i < columns && l < lines.size() && l < (i + 1) * per; ++l) {
+        if (!part.empty()) part += "\n";
+        part += lines[l];
+      }
+      show(body_[i], i < columns);
+      lv_obj_set_style_text_font(body_[i], ui::font(face), 0);
+      lv_obj_set_size(body_[i], col_w, body_h_);
+      lv_obj_set_pos(body_[i], i * (col_w + 2 * gap_), body_y_);
+      ui::set_text(body_[i], part);
+    }
 
     // The keys.
     show(keys_[0], show_back());
@@ -196,7 +243,8 @@ class StepTile : public tessera::Tile {
   int step_ = 0, total_ = 0, timer_min_ = 0;
   bool chosen_ = false, cooking_ = false, last_ = false, dirty_ = true;
   tessera::Text back_, next_, finish_, timer_, recipe_, words_;
-  lv_obj_t *title_{}, *where_{}, *body_{}, *empty_{};
+  lv_obj_t *title_{}, *where_{}, *empty_{};
+  lv_obj_t *body_[3]{};
   lv_obj_t *keys_[3]{}, *key_labels_[3]{};
 };
 
