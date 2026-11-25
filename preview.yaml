@@ -1,0 +1,19 @@
+# What tools/preview.py shows (docs/PREVIEW.md): a step of a recipe with a timer, and the ingredients. Never a secret.
+tiles:
+  - tile: step
+    name: Cooking
+    entity: sensor.kochen_tessera
+    options: { timer: script.kochen_timer_starten }
+    sizes: [5x4, full, 3x2]
+
+states:
+  sensor.kochen_tessera:
+    state: "Schritt 3"
+    attributes:
+      friendly_name: Kochen Tessera
+      rezept: Lachs mit Kruste auf Tomatenspaghetti
+      schritt: 3
+      schritte_gesamt: 7
+      timer_minuten: 12
+      letzter_schritt: false
+      teile: ["Den", "Lachs", "waschen,", "trocken", "tupfen", "und", "mit", "der", "Hautseite", "nach", "unten", "in", "eine", "gefettete", "Auflaufform", "legen.", "\n", "Parmesan,", "Semmelbrösel", "und", "Butter", "zu", "Streuseln", "verkneten", "und", "auf", "dem", "Fisch", "verteilen.", "Im", "vorgeheizten", "Ofen", "bei", "200", "Grad", "etwa", "12", "Minuten", "backen."]

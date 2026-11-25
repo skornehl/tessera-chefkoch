@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "name": "Deutsch"
+  },
+  "screen": {
+    "ingredients": "Zutaten",
+    "step": "Schritt {n} von {total}",
+    "back": "Zurück",
+    "next": "Weiter",
+    "finish": "Fertig",
+    "timer": "Timer {n} min",
+    "nothing": "Gerade wird nichts gekocht",
+    "nothing_hint": "Starte ein Rezept in Home Assistant",
+    "choose": "Kochen-Sensor auswählen"
+  },
+  "app": {
+    "name": "Chefkoch",
+    "summary": "Mitkochen: der aktuelle Rezeptschritt groß auf dem Display, mit Tasten für Zurück, Timer und Weiter.",
+    "tile_name": "Kochschritt",
+    "tile_example": "Schritt 3 von 7",
+    "opt_back": "Zurück-Taste",
+    "opt_back_hint": "Der Knopf, der einen Schritt zurückgeht (button.chefkoch_zuruck).",
+    "opt_next": "Weiter-Taste",
+    "opt_next_hint": "Der Knopf für den nächsten Schritt (button.chefkoch_weiter).",
+    "opt_finish": "Fertig-Taste",
+    "opt_finish_hint": "Der Knopf, der das Kochen beendet; erscheint im letzten Schritt (button.chefkoch_kochen_beenden).",
+    "opt_timer": "Timer-Skript",
+    "opt_timer_hint": "Ein Skript, das den Timer des aktuellen Schritts startet. Leer lassen für keine Timer-Taste."
+  }
+}

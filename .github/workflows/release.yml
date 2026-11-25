@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  zip:
+    name: Attach the plugin ZIP
+    runs-on: ubuntu-latest
+    # Uploading a release asset needs write access to the repository contents.
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tessera shows the manifest version, not the tag.
+      - name: Check the manifest version
+        run: |
+          version=$(sed -n 's/^version: *//p' tessera-plugin.yaml)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tessera-plugin.yaml has version $version, the release tag is $TAG"
+            exit 1
+          fi
+
+      # The plugin folder as Tessera reads it (manifest, plugin.yaml, components, translations, README, CHANGELOG),
+      # ready to unpack into Home Assistant's /config/tessera-plugins/chefkoch/.
+      - name: Build the ZIP
+        run: |
+          zip -r -X "$RUNNER_TEMP/tessera-chefkoch-$TAG.zip" \
+            tessera-plugin.yaml plugin.yaml components translations README.md CHANGELOG.md LICENSE preview.yaml
+
+      - name: Attach the ZIP to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP/tessera-chefkoch-$TAG.zip" --clobber

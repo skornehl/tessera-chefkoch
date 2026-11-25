@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "name": "English"
+  },
+  "screen": {
+    "ingredients": "Ingredients",
+    "step": "Step {n} of {total}",
+    "back": "Back",
+    "next": "Next",
+    "finish": "Done",
+    "timer": "Timer {n} min",
+    "nothing": "No recipe is being cooked",
+    "nothing_hint": "Start a recipe in Home Assistant",
+    "choose": "Choose the cooking sensor"
+  },
+  "app": {
+    "name": "Chefkoch",
+    "summary": "Cook along: the current recipe step large on the screen, with keys for back, timer and next.",
+    "tile_name": "Cooking step",
+    "tile_example": "Step 3 of 7",
+    "opt_back": "Back key",
+    "opt_back_hint": "The button that goes one step back (button.chefkoch_zuruck).",
+    "opt_next": "Next key",
+    "opt_next_hint": "The button that goes to the next step (button.chefkoch_weiter).",
+    "opt_finish": "Done key",
+    "opt_finish_hint": "The button that ends cooking, shown on the last step (button.chefkoch_kochen_beenden).",
+    "opt_timer": "Timer script",
+    "opt_timer_hint": "A script that starts the timer of the current step. Leave empty for no timer key."
+  }
+}

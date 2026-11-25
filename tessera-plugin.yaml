@@ -1,0 +1,36 @@
+# Chefkoch: cook along on a Tessera screen. The tile shows the current step of the recipe that the Home Assistant
+# integration ha-chefkoch (github.com/skornehl/ha-chefkoch) is cooking, in the largest font that fits, with keys to go
+# back, start the step's timer and go on. The words come pre-split by Home Assistant (attribute `teile`), because a
+# plugin's texts reach the screen at most 48 bytes each (README, "Set up").
+id: chefkoch
+version: 0.1.0
+api: "0.27"
+icon: chef-hat
+maintainer: skornehl
+license: MIT
+stage: beta
+topics: [home]
+requires:
+  esphome: 2026.6.2
+boards: any
+flash_kb: 12
+
+permissions:
+  home_assistant_actions: ["button.press", "script.turn_on"]
+
+tiles:
+  - id: step
+    name: tile_name
+    icon: chef-hat
+    sizes: { min: 3x2, max: 5x5, full: true }
+    memory: 1600
+    domains: [sensor]
+    attributes: [rezept, schritt, schritte_gesamt, timer_minuten, letzter_schritt, teile]
+    has_attributes: [teile]
+    example: tile_example
+    preview: { title: "{rezept}", value: "{state}" }
+    options:
+      - { id: back, kind: entity, domains: [button], label: opt_back, hint: opt_back_hint, default: button.chefkoch_zuruck }
+      - { id: next, kind: entity, domains: [button], label: opt_next, hint: opt_next_hint, default: button.chefkoch_weiter }
+      - { id: finish, kind: entity, domains: [button], label: opt_finish, hint: opt_finish_hint, default: button.chefkoch_kochen_beenden }
+      - { id: timer, kind: entity, domains: [script], label: opt_timer, hint: opt_timer_hint }
