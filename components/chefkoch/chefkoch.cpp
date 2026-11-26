@@ -1,9 +1,9 @@
 #include "chefkoch.h"
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <vector>
 
 namespace esphome::chefkoch {
 
@@ -15,6 +15,10 @@ namespace ui = tessera::ui;
 //
 // Home Assistant sends the step's words as the list `teile`, one word per item and "\n" for a new line, because the
 // app cuts every text of a tile's data at 48 bytes; a list of words reaches the screen whole up to about 2.5 KB.
+//
+// Memory: the words live once, in `words_` (tessera::Text, PSRAM). Lines are kept as offsets into it, and a column is
+// measured and shown straight from that buffer (a NUL written in for the moment of the call), so laying out a step
+// takes no copy of the text in the memory inside the chip.
 class StepTile : public tessera::Tile {
  public:
   explicit StepTile(const tessera::Plugin *plugin) : plugin_(plugin) {}
@@ -26,6 +30,7 @@ class StepTile : public tessera::Tile {
     next_ = c.options["next"] | "";
     finish_ = c.options["finish"] | "";
     timer_ = c.options["timer"] | "";
+    words_.reserve(WORDS_RESERVE);
 
     gap_ = ui::px(ui::large() ? 12 : 6);
     head_h_ = ui::line_height(Font::TITLE);
@@ -74,19 +79,29 @@ class StepTile : public tessera::Tile {
     total_ = number(a["schritte_gesamt"]);
     timer_min_ = number(a["timer_minuten"]);
     last_ = truth(a["letzter_schritt"]);
+
+    // The words joined again, and where each line starts. More lines than MAX_LINES stay in the last one, where the
+    // label still breaks them; it only means they never get a column of their own.
+    // A "\n" only takes effect before the next word, so empty lines and a trailing "\n" make no line of their own.
     words_.clear();
-    bool line_start = true;
+    lines_ = 1;
+    starts_[0] = 0;
+    bool line_break = false;
     for (JsonVariantConst part : a["teile"].as<JsonArrayConst>()) {
       const char *w = part | "";
       if (std::strcmp(w, "\n") == 0) {
-        words_ += "\n";
-        line_start = true;
+        line_break = !words_.empty();
         continue;
       }
       if (!*w) continue;
-      if (!line_start) words_ += " ";
+      if (line_break) {
+        words_ += '\n';
+        if (lines_ < MAX_LINES) starts_[lines_++] = static_cast<uint16_t>(words_.size());
+        line_break = false;
+      } else if (!words_.empty()) {
+        words_ += ' ';
+      }
       words_ += w;
-      line_start = false;
     }
     cooking_ = chosen_ && !words_.empty() && std::strcmp(state, "unavailable") != 0 &&
                std::strcmp(state, "unknown") != 0;
@@ -116,14 +131,17 @@ class StepTile : public tessera::Tile {
       const int key = std::min(2, p.x / std::max(1, key_w_ + gap_));
       if (key == 0 && show_back()) press(back_);
       else if (key == 1 && show_timer()) tessera::action("script.turn_on", roomy::plain(timer_));
-      else if (key == 2) press(last_ && !finish_.empty() ? finish_ : next_);
+      else if (key == 2) press(forward());
       return;
     }
-    if (p.x >= width_ / 2) press(last_ && !finish_.empty() ? finish_ : next_);
+    if (p.x >= width_ / 2) press(forward());
     else if (show_back()) press(back_);
   }
 
  private:
+  static constexpr int MAX_LINES = 64;           // ingredients of a long recipe; more stay in the last line
+  static constexpr size_t WORDS_RESERVE = 2600;  // about what the app sends at most, so `words_` grows once
+
   static int number(JsonVariantConst v) {
     if (v.is<int>()) return v.as<int>();
     const char *s = v | "";
@@ -136,31 +154,48 @@ class StepTile : public tessera::Tile {
   }
   bool show_back() const { return step_ > 0 && !back_.empty(); }
   bool show_timer() const { return step_ > 0 && timer_min_ > 0 && !timer_.empty(); }
+  const tessera::Text &forward() const { return last_ && !finish_.empty() ? finish_ : next_; }
   static void press(const tessera::Text &button) {
     if (!button.empty()) tessera::action("button.press", roomy::plain(button));
   }
-  int column_width(int n) const { return std::max(1, (width_ - (n - 1) * 2 * gap_) / n); }
-
-  // Whether the lines, cut into n columns in their order, fit the body in font f.
-  bool fits(const std::vector<std::string> &lines, int n, Font f, int32_t line_space) const {
-    const size_t per = (lines.size() + n - 1) / n;
-    const int w = column_width(n);
-    for (int i = 0; i < n; ++i) {
-      std::string part;
-      for (size_t l = i * per; l < lines.size() && l < (i + 1) * per; ++l) {
-        if (!part.empty()) part += "\n";
-        part += lines[l];
-      }
-      lv_point_t size;
-      lv_text_get_size(&size, part.c_str(), ui::font(f), 0, line_space, w, LV_TEXT_FLAG_NONE);
-      if (size.y > body_h_) return false;
-    }
-    return true;
-  }
-
   static void show(lv_obj_t *obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  int column_width(int n) const { return std::max(1, (width_ - (n - 1) * 2 * gap_) / n); }
+
+  // Lines [first, end) as a range of `words_`: from the start of `first` to the newline before `end`.
+  void range(int first, int end, size_t &from, size_t &to) const {
+    from = first < lines_ ? starts_[first] : words_.size();
+    to = end < lines_ ? starts_[end] - 1 : words_.size();
+    if (to < from) to = from;
+  }
+
+  // Calls `use` with that part of `words_` as a C string, without a copy: the character after it becomes a NUL for the
+  // moment of the call and is put back afterwards.
+  template<typename F> void with_part(size_t from, size_t to, F use) {
+    char *buf = &words_[0];
+    const char kept = buf[to];
+    buf[to] = '\0';
+    use(buf + from);
+    buf[to] = kept;
+  }
+
+  // Whether the lines, cut into n columns in their order, fit the body in font f.
+  bool fits(int n, Font f, int32_t line_space) {
+    const int per = (lines_ + n - 1) / n;
+    const int w = column_width(n);
+    for (int i = 0; i < n; ++i) {
+      size_t from, to;
+      range(i * per, std::min(lines_, (i + 1) * per), from, to);
+      lv_point_t size{};
+      with_part(from, to, [&](const char *s) {
+        lv_text_get_size(&size, s, ui::font(f), 0, line_space, w, LV_TEXT_FLAG_NONE);
+      });
+      if (size.y > body_h_) return false;
+    }
+    return true;
   }
 
   void paint() {
@@ -177,9 +212,9 @@ class StepTile : public tessera::Tile {
     }
 
     // Top: where we are on the right, the recipe's name in the room left of it.
-    std::string where = step_ <= 0 ? std::string(plugin_->text("ingredients"))
-                                   : tessera::fill(tessera::format(plugin_->text("step"), step_).c_str(), "total",
-                                                   std::to_string(total_));
+    const std::string where = step_ <= 0 ? std::string(plugin_->text("ingredients"))
+                                         : tessera::fill(tessera::format(plugin_->text("step"), step_).c_str(),
+                                                         "total", std::to_string(total_));
     const int where_w = std::min(width_ / 2, ui::text_width(where, Font::BODY_LARGE) + ui::px(4));
     lv_obj_set_size(where_, where_w, ui::line_height(Font::BODY_LARGE));
     lv_obj_set_pos(where_, width_ - where_w, (head_h_ - ui::line_height(Font::BODY_LARGE)) / 2);
@@ -187,45 +222,43 @@ class StepTile : public tessera::Tile {
     lv_obj_set_width(title_, std::max(1, width_ - where_w - gap_));
     ui::set_text(title_, roomy::plain(recipe_));
 
-    // The words in the largest font they fit in; lines (the ingredients) may spread over two or three columns, and
-    // of two layouts in the same font the one with fewer columns wins.
-    const std::string text = roomy::plain(words_);
-    std::vector<std::string> lines;
-    for (size_t at = 0;;) {
-      const size_t end = text.find('\n', at);
-      lines.push_back(text.substr(at, end == std::string::npos ? std::string::npos : end - at));
-      if (end == std::string::npos) break;
-      at = end + 1;
+    // Which of the larger fonts have every character of the words (one short-lived copy: ui::covers takes a
+    // std::string), then the largest font they fit in; lines may spread over two or three columns, and of two
+    // layouts in the same font the one with fewer columns wins.
+    bool covered[2];
+    {
+      const std::string probe = roomy::plain(words_);
+      covered[0] = ui::covers(probe, Font::HEADLINE);
+      covered[1] = ui::covers(probe, Font::BODY_LARGE);
     }
     const int32_t line_space = lv_obj_get_style_text_line_space(body_[0], LV_PART_MAIN);
+    const Font faces[3] = {Font::HEADLINE, Font::BODY_LARGE, Font::BODY};
     Font face = Font::BODY;
-    int columns = 1;
+    int columns = std::min(3, lines_);
     bool found = false;
-    for (Font f : {Font::HEADLINE, Font::BODY_LARGE, Font::BODY}) {
-      if (f != Font::BODY && !ui::covers(text, f)) continue;
-      for (int n = 1; n <= 3 && n <= static_cast<int>(lines.size()) && !found; ++n) {
-        if (fits(lines, n, f, line_space)) {
-          face = f;
+    for (int fi = 0; fi < 3 && !found; ++fi) {
+      if (fi < 2 && !covered[fi]) continue;
+      for (int n = 1; n <= 3 && n <= lines_; ++n) {
+        if (fits(n, faces[fi], line_space)) {
+          face = faces[fi];
           columns = n;
           found = true;
+          break;
         }
       }
-      if (found) break;
     }
-    if (!found) columns = std::min<int>(3, lines.size());
+
     const int col_w = column_width(columns);
-    const size_t per = (lines.size() + columns - 1) / columns;
+    const int per = (lines_ + columns - 1) / columns;
     for (int i = 0; i < 3; ++i) {
-      std::string part;
-      for (size_t l = i * per; i < columns && l < lines.size() && l < (i + 1) * per; ++l) {
-        if (!part.empty()) part += "\n";
-        part += lines[l];
-      }
       show(body_[i], i < columns);
-      lv_obj_set_style_text_font(body_[i], ui::font(face), 0);
+      if (i >= columns) continue;
+      ui::set_font(body_[i], face);
       lv_obj_set_size(body_[i], col_w, body_h_);
       lv_obj_set_pos(body_[i], i * (col_w + 2 * gap_), body_y_);
-      ui::set_text(body_[i], part);
+      size_t from, to;
+      range(i * per, std::min(lines_, (i + 1) * per), from, to);
+      with_part(from, to, [&](const char *s) { lv_label_set_text(body_[i], s); });
     }
 
     // The keys.
@@ -240,12 +273,12 @@ class StepTile : public tessera::Tile {
 
   const tessera::Plugin *plugin_;
   int width_ = 0, height_ = 0, gap_ = 0, head_h_ = 0, key_h_ = 0, key_w_ = 0, keys_y_ = 0, body_y_ = 0, body_h_ = 0;
-  int step_ = 0, total_ = 0, timer_min_ = 0;
+  int step_ = 0, total_ = 0, timer_min_ = 0, lines_ = 0;
   bool chosen_ = false, cooking_ = false, last_ = false, dirty_ = true;
+  uint16_t starts_[MAX_LINES]{};
   tessera::Text back_, next_, finish_, timer_, recipe_, words_;
   lv_obj_t *title_{}, *where_{}, *empty_{};
-  lv_obj_t *body_[3]{};
-  lv_obj_t *keys_[3]{}, *key_labels_[3]{};
+  lv_obj_t *body_[3]{}, *keys_[3]{}, *key_labels_[3]{};
 };
 
 void Chefkoch::setup() {
