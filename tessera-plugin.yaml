@@ -3,7 +3,7 @@
 # back, start the step's timer and go on. The words come pre-split by Home Assistant (attribute `teile`), because a
 # plugin's texts reach the screen at most 48 bytes each (README, "Set up").
 id: chefkoch
-version: 0.1.1
+version: 0.1.2
 api: "0.27"
 icon: chef-hat
 maintainer: skornehl
@@ -23,7 +23,7 @@ tiles:
     name: tile_name
     icon: chef-hat
     sizes: { min: 3x2, max: 5x5, full: true }
-    memory: 1900
+    memory: 1500
     domains: [sensor]
     attributes: [rezept, schritt, schritte_gesamt, timer_minuten, letzter_schritt, teile]
     has_attributes: [teile]
